@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portal de Atendimento VR Software</title>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1rem;
+        }
+
+        .content {
+            display: flex;
+            min-height: 700px;
+        }
+
+        .sidebar {
+            width: 300px;
+            background: #f8f9fa;
+            padding: 20px;
+            border-right: 1px solid #dee2e6;
+        }
+
+        .main-content {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .info-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .info-card h3 {
+            color: #1e3c72;
+            margin-bottom: 15px;
+            font-size: 1.2rem;
+        }
+
+        .info-item {
+            margin-bottom: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+        }
+
+        .info-label {
+            font-weight: bold;
+            color: #495057;
+            display: block;
+            margin-bottom: 5px;
+        }
+
+        .info-value {
+            color: #212529;
+        }
+
+        .chat-container {
+            flex: 1;
+            background: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background: #f8f9fa;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            position: relative;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.incoming {
+            background: white;
+            margin-right: auto;
+            border-bottom-left-radius: 5px;
+        }
+
+        .message.outgoing {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            margin-left: auto;
+            border-bottom-right-radius: 5px;
+        }
+
+        .message-header {
+            font-size: 0.85rem;
+            margin-bottom: 5px;
+            opacity: 0.8;
+        }
+
+        .message-content {
+            line-height: 1.4;
+        }
+
+        .input-container {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #dee2e6;
+            display: flex;
+            gap: 10px;
+        }
+
+        .input-container input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 25px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .input-container input:focus {
+            border-color: #667eea;
+        }
+
+        .input-container button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 25px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .input-container button:hover {
+            transform: translateY(-2px);
+        }
+
+        .input-container button:active {
+            transform: translateY(0);
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-online {
+            background: #28a745;
+            box-shadow: 0 0 10px #28a745;
+        }
+
+        .status-offline {
+            background: #dc3545;
+        }
+
+        .status-waiting {
+            background: #ffc107;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .action-btn {
+            width: 100%;
+            padding: 12px;
+            margin-bottom: 10px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .action-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .action-btn.secondary {
+            background: #6c757d;
+        }
+
+        .action-btn.success {
+            background: #28a745;
+        }
+
+        .action-btn.danger {
+            background: #dc3545;
+        }
+
+        @media (max-width: 768px) {
+            .content {
+                flex-direction: column;
+            }
+            
+            .sidebar {
+                width: 100%;
+                border-right: none;
+                border-bottom: 1px solid #dee2e6;
+            }
+            
+            .header h1 {
+                font-size: 1.8rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Portal de Atendimento VR Software</h1>
+            <p>Atendimento em tempo real via WhatsApp</p>
+        </div>
+        
+        <div class="content">
+            <div class="sidebar">
+                <div class="info-card">
+                    <h3>📋 Informações da Solicitação</h3>
+                    <div id="solicitacao-info">
+                        <p>Carregando informações...</p>
+                    </div>
+                </div>
+                
+                <div class="info-card">
+                    <h3>👤 Dados do Cliente</h3>
+                    <div id="cliente-info">
+                        <p>Carregando dados do cliente...</p>
+                    </div>
+                </div>
+                
+                <div class="info-card">
+                    <h3>⚙️ Ações</h3>
+                    <button class="action-btn" onclick="assumirAtendimento()">
+                        ✅ Assumir Atendimento
+                    </button>
+                    <button class="action-btn success" onclick="finalizarAtendimento()">
+                        🏁 Finalizar Atendimento
+                    </button>
+                    <button class="action-btn secondary" onclick="exportarConversa()">
+                        📄 Exportar Conversa
+                    </button>
+                    <button class="action-btn danger" onclick="transferirAtendimento()">
+                        🔄 Transferir Atendimento
+                    </button>
+                </div>
+                
+                <div class="info-card">
+                    <h3>📊 Status do Sistema</h3>
+                    <div id="system-status">
+                        <p><span class="status-indicator status-waiting"></span> Conectando...</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="main-content">
+                <div class="chat-container">
+                    <div class="messages" id="messages">
+                        <!-- Mensagens serão adicionadas aqui -->
+                        <div class="message incoming">
+                            <div class="message-header">
+                                <strong>VR Software</strong> • Agora
+                            </div>
+                            <div class="message-content">
+                                Bem-vindo ao portal de atendimento! Aguarde o carregamento...
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="input-container">
+                        <input 
+                            type="text" 
+                            id="messageInput" 
+                            placeholder="Digite sua mensagem para o cliente..."
+                            onkeypress="handleKeyPress(event)"
+                        >
+                        <button onclick="sendMessage()">
+                            📤 Enviar
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Obter parâmetros da URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const solicitacaoId = window.location.pathname.split('/').pop();
+        const atendenteNome = urlParams.get('atendente') || 'Atendente';
+        const discordId = urlParams.get('discordId') || 'discord_' + Date.now();
+
+        // Conectar ao WebSocket
+        const socket = io('/atendimento');
+        
+        // Elementos DOM
+        const messagesEl = document.getElementById('messages');
+        const messageInputEl = document.getElementById('messageInput');
+        const solicitacaoInfoEl = document.getElementById('solicitacao-info');
+        const clienteInfoEl = document.getElementById('cliente-info');
+        const systemStatusEl = document.getElementById('system-status');
+
+        // Estado da aplicação
+        let estadoAtendimento = 'conectando';
+        let dadosSolicitacao = null;
+        let dadosCliente = null;
+
+        // ========== EVENTOS WEBSOCKET ==========
+
+        socket.on('connected', (data) => {
+            updateSystemStatus('online', 'Conectado ao servidor');
+            console.log('Conectado:', data);
+            
+            // Login automático
+            socket.emit('atendente:login', {
+                nome: atendenteNome,
+                discordId: discordId
+            });
+        });
+
+        socket.on('atendente:logged', (data) => {
+            console.log('Login realizado:', data);
+            addSystemMessage('Login realizado como ' + atendenteNome);
+            
+            // Carregar dados da solicitação
+            carregarDadosSolicitacao();
+        });
+
+        socket.on('solicitacao:assumida:success', (data) => {
+            addSystemMessage('Solicitação assumida com sucesso');
+            estadoAtendimento = 'ativo';
+        });
+
+        socket.on('solicitacao:nova', (data) => {
+            console.log('Nova solicitação:', data);
+            // Atualizar lista se necessário
+        });
+
+        socket.on('message:sent', (data) => {
+            if (data.success) {
+                console.log('Mensagem enviada com sucesso');
+            } else {
+                addSystemMessage('Erro ao enviar: ' + (data.error || 'Erro desconhecido'));
+            }
+        });
+
+        socket.on('whatsapp:qr', (qr) => {
+            addSystemMessage('QR Code WhatsApp recebido - Escaneie no terminal');
+        });
+
+        socket.on('whatsapp:ready', (info) => {
+            addSystemMessage('WhatsApp conectado!');
+            updateSystemStatus('online', 'WhatsApp conectado');
+        });
+
+        socket.on('atendimento:finalizado', (data) => {
+            addSystemMessage('Atendimento finalizado por ' + data.atendente);
+            estadoAtendimento = 'finalizado';
+        });
+
+        // ========== FUNÇÕES DA INTERFACE ==========
+
+        function carregarDadosSolicitacao() {
+            // Simular carregamento de dados da API
+            setTimeout(() => {
+                dadosSolicitacao = {
+                    id: solicitacaoId,
+                    razaoSocial: 'Loja Exemplo Ltda',
+                    cnpj: '12.345.678/0001-99',
+                    nomeResponsavel: 'João da Silva',
+                    tipoProblema: 'PDV Parado',
+                    descricao: 'PDV não está ligando após queda de energia',
+                    whatsappId: '5511999999999',
+                    status: 'pendente',
+                    timestamp: new Date().toISOString()
+                };
+
+                dadosCliente = {
+                    nome: dadosSolicitacao.nomeResponsavel,
+                    empresa: dadosSolicitacao.razaoSocial,
+                    telefone: dadosSolicitacao.whatsappId,
+                    ultimaMensagem: '5 minutos atrás'
+                };
+
+                atualizarInformacoes();
+                
+                // Assumir atendimento automaticamente
+                assumirAtendimento();
+                
+                // Adicionar mensagem de boas-vindas
+                addMessage('VR Software', `Olá ${atendenteNome}! Você está atendendo a solicitação ${solicitacaoId}. O cliente já foi notificado.`, 'incoming');
+                
+            }, 1000);
+        }
+
+        function atualizarInformacoes() {
+            // Atualizar informações da solicitação
+            solicitacaoInfoEl.innerHTML = `
+                <div class="info-item">
+                    <span class="info-label">ID:</span>
+                    <span class="info-value">${dadosSolicitacao.id}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Tipo:</span>
+                    <span class="info-value">${dadosSolicitacao.tipoProblema}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Status:</span>
+                    <span class="info-value"><span class="status-indicator ${dadosSolicitacao.status === 'pendente' ? 'status-waiting' : 'status-online'}"></span>${dadosSolicitacao.status}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Recebida:</span>
+                    <span class="info-value">${new Date(dadosSolicitacao.timestamp).toLocaleString('pt-BR')}</span>
+                </div>
+            `;
+
+            // Atualizar informações do cliente
+            clienteInfoEl.innerHTML = `
+                <div class="info-item">
+                    <span class="info-label">Nome:</span>
+                    <span class="info-value">${dadosCliente.nome}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Empresa:</span>
+                    <span class="info-value">${dadosCliente.empresa}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">WhatsApp:</span>
+                    <span class="info-value">${dadosCliente.telefone}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Última msg:</span>
+                    <span class="info-value">${dadosCliente.ultimaMensagem}</span>
+                </div>
+            `;
+        }
+
+        function assumirAtendimento() {
+            if (estadoAtendimento !== 'ativo') {
+                socket.emit('solicitacao:assumir', {
+                    solicitacaoId: solicitacaoId
+                });
+                addSystemMessage('Assumindo atendimento...');
+            }
+        }
+
+        function sendMessage() {
+            const message = messageInputEl.value.trim();
+            
+            if (!message) {
+                addSystemMessage('Digite uma mensagem antes de enviar');
+                return;
+            }
+
+            if (!dadosSolicitacao) {
+                addSystemMessage('Aguarde os dados carregarem antes de enviar');
+                return;
+            }
+
+            // Enviar via WebSocket
+            socket.emit('mensagem:enviar', {
+                whatsappId: dadosSolicitacao.whatsappId,
+                mensagem: message,
+                atendente: atendenteNome,
+                solicitacaoId: solicitacaoId
+            });
+
+            // Adicionar visualmente
+            addMessage(atendenteNome, message, 'outgoing');
+            
+            // Limpar input
+            messageInputEl.value = '';
+            messageInputEl.focus();
+        }
+
+        function finalizarAtendimento() {
+            if (confirm('Tem certeza que deseja finalizar este atendimento?')) {
+                socket.emit('atendimento:finalizar', {
+                    solicitacaoId: solicitacaoId,
+                    atendente: atendenteNome
+                });
+                addSystemMessage('Finalizando atendimento...');
+            }
+        }
+
+        function exportarConversa() {
+            addSystemMessage('Exportando conversa... (em desenvolvimento)');
+        }
+
+        function transferirAtendimento() {
+            addSystemMessage('Transferindo atendimento... (em desenvolvimento)');
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        function addMessage(author, text, type = 'incoming') {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            
+            const now = new Date();
+            const timeString = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+            
+            messageDiv.innerHTML = `
+                <div class="message-header">
+                    <strong>${author}</strong> • ${timeString}
+                </div>
+                <div class="message-content">
+                    ${text}
+                </div>
+            `;
+            
+            messagesEl.appendChild(messageDiv);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function addSystemMessage(text) {
+            addMessage('Sistema', text, 'incoming');
+        }
+
+        function updateSystemStatus(status, message) {
+            let statusClass = 'status-waiting';
+            let statusText = 'Conectando...';
+            
+            switch(status) {
+                case 'online':
+                    statusClass = 'status-online';
+                    statusText = 'Online';
+                    break;
+                case 'offline':
+                    statusClass = 'status-offline';
+                    statusText = 'Offline';
+                    break;
+                case 'error':
+                    statusClass = 'status-offline';
+                    statusText = 'Erro';
+                    break;
+            }
+            
+            systemStatusEl.innerHTML = `
+                <p><span class="status-indicator ${statusClass}"></span> ${statusText} - ${message}</p>
+            `;
+        }
+
+        // Inicialização
+        document.addEventListener('DOMContentLoaded', () => {
+            messageInputEl.focus();
+            updateSystemStatus('waiting', 'Conectando ao servidor...');
+        });
+    </script>
+</body>
+</html>
