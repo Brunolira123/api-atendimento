@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import { WebSocketGatewayService } from '../websocket/websocket.gateway';
 import { Conversation } from '../../shared/entities/conversation.entity';
 import { Solicitacao } from '../../shared/entities/solicitacao.entity';
+import { DiscordService } from '@modules/discord/discord.service';
 
 // Interface para tipos do WhatsApp
 interface WhatsAppMessage {
@@ -55,13 +56,14 @@ export class WhatsAppService implements OnModuleDestroy {
   private sessoesAtivas = new Map<string, SessionData>();
 
   constructor(
-    @InjectRepository(Conversation)
-    private conversationRepository: Repository<Conversation>,
-    @InjectRepository(Solicitacao)
-    private solicitacaoRepository: Repository<Solicitacao>,
-    private configService: ConfigService,
-    private webSocketGateway: WebSocketGatewayService,
-  ) {}
+  @InjectRepository(Conversation)
+  private conversationRepository: Repository<Conversation>,
+  @InjectRepository(Solicitacao)
+  private solicitacaoRepository: Repository<Solicitacao>,
+  private configService: ConfigService,
+  private webSocketGateway: WebSocketGatewayService,
+  private discordService: DiscordService, // <-- ADICIONAR
+) {}
 
   async initialize(): Promise<void> {
     this.logger.log('🔄 Inicializando WhatsApp Service...');
@@ -176,39 +178,91 @@ export class WhatsAppService implements OnModuleDestroy {
 
   // CORREÇÃO: Usar tipo any para evitar erros de tipo
   private async handleIncomingMessage(message: any): Promise<void> {
-    try {
-      // Verificar se é mensagem de grupo ou status de forma compatível
-      const isGroup = message.from.includes('@g.us') || 
-                     (message.id && message.id.participant) ||
-                     message.type === 'gp2';
-      
-      const isStatus = message.type === 'notification' || 
-                      message.type === 'e2e_notification' ||
-                      !message.body;
-
-      if (isGroup || isStatus) {
-        return;
-      }
-
-      const whatsappId = message.from.replace('@c.us', '');
-      const texto = message.body || '';
-
-      this.logger.log(`📩 Mensagem de ${whatsappId}: ${texto.substring(0, 100)}`);
-
-      // Verifica se já tem sessão ativa
-      const sessao = this.sessoesAtivas.get(whatsappId);
-
-      if (!sessao) {
-        // Inicia novo atendimento
-        await this.iniciarColeta(whatsappId);
-      } else {
-        // Continua coleta de dados
-        await this.processarMensagem(whatsappId, texto, sessao);
-      }
-    } catch (error) {
-      this.logger.error(`❌ Erro ao processar mensagem: ${error.message}`);
+  try {
+    // Filtro mais robusto para ignorar grupos, newsletters, status, etc.
+    const whatsappId = message.from;
+    const texto = message.body || '';
+    
+    // Ignorar completamente newsletters (@newsletter)
+    if (whatsappId.includes('@newsletter')) {
+      this.logger.log(`📭 Ignorando newsletter: ${whatsappId}`);
+      return;
     }
+    
+    // Verificar se é grupo (termina com @g.us ou tem participant)
+    const isGroup = whatsappId.endsWith('@g.us') || 
+                   whatsappId.includes('@g.us') ||
+                   (message.id && message.id.participant) ||
+                   message.type === 'gp2' ||
+                   message.type === 'group';
+    
+    // Verificar se é status/notificação
+    const isStatus = message.type === 'notification' || 
+                    message.type === 'e2e_notification' ||
+                    message.type === 'call_log' ||
+                    !texto.trim() ||
+                    texto.startsWith('‎'); // Mensagens vazias com caractere especial
+    
+    // Verificar se é broadcast
+    const isBroadcast = message.type === 'broadcast' || 
+                       message.type === 'template';
+    
+    if (isGroup || isStatus || isBroadcast) {
+      this.logger.log(`📭 Ignorando mensagem (tipo: ${message.type}, grupo: ${isGroup}): ${whatsappId}`);
+      return;
+    }
+    
+    // Extrair apenas o número (remove @c.us)
+    const numero = whatsappId.replace('@c.us', '');
+    
+    // Validar se é um número de WhatsApp válido (apenas números)
+    if (!/^\d+$/.test(numero)) {
+      this.logger.warn(`📭 Número inválido: ${whatsappId}`);
+      return;
+    }
+
+    this.logger.log(`📩 Mensagem de ${numero}: ${texto.substring(0, 100)}`);
+
+    // Verifica se já tem sessão ativa
+    const sessao = this.sessoesAtivas.get(numero);
+
+    if (!sessao) {
+      // Inicia novo atendimento
+      await this.iniciarColeta(numero);
+    } else {
+      // Continua coleta de dados
+      await this.processarMensagem(numero, texto, sessao);
+    }
+  } catch (error: any) {
+    this.logger.error(`❌ Erro ao processar mensagem: ${error.message}`);
   }
+}
+
+private async notificarSolicitacao(whatsappId: string, dados: any): Promise<void> {
+  try {
+    // Primeiro tenta usar o Discord Bot
+    if (this.discordService) {
+      await this.discordService.notificarNovaSolicitacao({
+        id: dados.solicitacaoId,
+        razaoSocial: dados.razaoSocial,
+        cnpj: this.formatarCNPJ(dados.cnpj),
+        nomeResponsavel: dados.nomeResponsavel,
+        tipoProblema: dados.tipoProblema,
+        descricao: dados.descricaoProblema,
+        whatsappId,
+        status: 'pendente',
+      });
+      this.logger.log(`✅ Notificação enviada para Discord Bot`);
+      return;
+    }
+  } catch (error: any) {
+    this.logger.warn(`⚠️  Discord Bot falhou: ${error.message}`);
+  }
+  
+  // Fallback: usar webhook antigo
+  await this.enviarParaDiscordWebhook(whatsappId, dados);
+}
+
 
   private async iniciarColeta(whatsappId: string): Promise<void> {
     const sessao: SessionData = {
@@ -400,34 +454,34 @@ _(Descreva detalhadamente o que está acontecendo)_
     await this.finalizarColeta(whatsappId, sessao);
   }
 
-  private async finalizarColeta(whatsappId: string, sessao: SessionData): Promise<void> {
-    try {
-      const solicitacaoId = `SOL${Date.now()}${Math.random()
-        .toString(36)
-        .substr(2, 4)
-        .toUpperCase()}`;
+ private async finalizarColeta(whatsappId: string, sessao: SessionData): Promise<void> {
+  try {
+    const solicitacaoId = `SOL${Date.now()}${Math.random()
+      .toString(36)
+      .substr(2, 4)
+      .toUpperCase()}`;
 
-      sessao.dados.solicitacaoId = solicitacaoId;
-      sessao.dados.fim = new Date();
-      sessao.dados.status = 'pendente';
+    sessao.dados.solicitacaoId = solicitacaoId;
+    sessao.dados.fim = new Date();
+    sessao.dados.status = 'pendente';
 
-      // Salva no banco
-      const solicitacao = this.solicitacaoRepository.create({
-        solicitacaoId,
-        whatsappId,
-        razaoSocial: sessao.dados.razaoSocial,
-        cnpj: sessao.dados.cnpj,
-        nomeResponsavel: sessao.dados.nomeResponsavel,
-        tipoProblema: sessao.dados.tipoProblema,
-        descricao: sessao.dados.descricaoProblema,
-        status: 'pendente',
-        createdAt: new Date(),
-      });
+    // Salva no banco
+    const solicitacao = this.solicitacaoRepository.create({
+      solicitacaoId,
+      whatsappId,
+      razaoSocial: sessao.dados.razaoSocial,
+      cnpj: sessao.dados.cnpj,
+      nomeResponsavel: sessao.dados.nomeResponsavel,
+      tipoProblema: sessao.dados.tipoProblema,
+      descricao: sessao.dados.descricaoProblema,
+      status: 'pendente',
+      createdAt: new Date(),
+    });
 
-      await this.solicitacaoRepository.save(solicitacao);
+    await this.solicitacaoRepository.save(solicitacao);
 
-      // Mensagem para o cliente
-      const mensagemCliente = `
+    // Mensagem para o cliente
+    const mensagemCliente = `
 ✅ *SOLICITAÇÃO REGISTRADA COM SUCESSO!*
 
 📋 *Resumo da sua solicitação:*
@@ -447,41 +501,55 @@ _(Descreva detalhadamente o que está acontecendo)_
 👨‍💻 *Um analista especializado entrará em contato em breve!*
 
 📱 *Para acompanhar o status, mantenha este WhatsApp aberto.*
-      `;
+    `;
 
-      await this.enviarMensagem(whatsappId, mensagemCliente);
+    await this.enviarMensagem(whatsappId, mensagemCliente);
 
-      // Envia para Discord via Webhook (se configurado)
+    // ENVIA PARA DISCORD COM BOTÕES INTERATIVOS
+    try {
+      await this.notificarSolicitacao(whatsappId, {
+  solicitacaoId,
+  razaoSocial: sessao.dados.razaoSocial,
+  cnpj: sessao.dados.cnpj,
+  nomeResponsavel: sessao.dados.nomeResponsavel,
+  tipoProblema: sessao.dados.tipoProblema,
+  descricaoProblema: sessao.dados.descricaoProblema,
+  opcaoEscolhida: sessao.dados.opcaoEscolhida,
+});
+    } catch (error: any) {
+      this.logger.error(`❌ Erro ao enviar para Discord Service: ${error.message}`);
+      // Fallback para webhook antigo
       await this.enviarParaDiscordWebhook(whatsappId, sessao.dados);
-
-      // Notifica via WebSocket
-      if (this.webSocketGateway) {
-        this.webSocketGateway.emitNovaSolicitacao({
-          id: solicitacaoId,
-          razaoSocial: sessao.dados.razaoSocial,
-          cnpj: this.formatarCNPJ(sessao.dados.cnpj),
-          nomeResponsavel: sessao.dados.nomeResponsavel,
-          tipoProblema: sessao.dados.tipoProblema,
-          descricao: sessao.dados.descricaoProblema?.substring(0, 200) + '...',
-          whatsappId,
-          status: 'pendente',
-          prioridade: sessao.dados.opcaoEscolhida === 1 ? 'alta' : 'normal',
-        });
-      }
-
-      // Marca como finalizada
-      sessao.estado = 'finalizada';
-      this.sessoesAtivas.set(whatsappId, sessao);
-
-      this.logger.log(`✅ Solicitação ${solicitacaoId} registrada com sucesso`);
-    } catch (error) {
-      this.logger.error(`❌ Erro ao finalizar coleta: ${error.message}`);
-      await this.enviarMensagem(
-        whatsappId,
-        '❌ Ocorreu um erro ao registrar sua solicitação. Por favor, tente novamente.',
-      );
     }
+
+    // Notifica via WebSocket
+    if (this.webSocketGateway) {
+      this.webSocketGateway.emitNovaSolicitacao({
+        id: solicitacaoId,
+        razaoSocial: sessao.dados.razaoSocial,
+        cnpj: this.formatarCNPJ(sessao.dados.cnpj),
+        nomeResponsavel: sessao.dados.nomeResponsavel,
+        tipoProblema: sessao.dados.tipoProblema,
+        descricao: sessao.dados.descricaoProblema?.substring(0, 200) + '...',
+        whatsappId,
+        status: 'pendente',
+        prioridade: sessao.dados.opcaoEscolhida === 1 ? 'alta' : 'normal',
+      });
+    }
+
+    // Marca como finalizada
+    sessao.estado = 'finalizada';
+    this.sessoesAtivas.set(whatsappId, sessao);
+
+    this.logger.log(`✅ Solicitação ${solicitacaoId} registrada com sucesso`);
+  } catch (error: any) {
+    this.logger.error(`❌ Erro ao finalizar coleta: ${error.message}`);
+    await this.enviarMensagem(
+      whatsappId,
+      '❌ Ocorreu um erro ao registrar sua solicitação. Por favor, tente novamente.',
+    );
   }
+}
 
   async enviarMensagem(
     whatsappId: string,

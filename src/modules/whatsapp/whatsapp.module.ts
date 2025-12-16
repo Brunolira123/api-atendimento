@@ -6,11 +6,13 @@ import { WebSocketModule } from '../websocket/websocket.module';
 import { Conversation } from '../../shared/entities/conversation.entity';
 import { Message } from '../../shared/entities/message.entity';
 import { Solicitacao } from '../../shared/entities/solicitacao.entity';
+import { DiscordModule } from '@modules/discord/discord.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Conversation, Message, Solicitacao]),
     WebSocketModule,
+    DiscordModule,
   ],
   providers: [WhatsAppService],
   controllers: [WhatsAppController],

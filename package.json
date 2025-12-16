@@ -25,6 +25,7 @@
     "migration:revert": "npm run typeorm migration:revert -- -d ./src/config/typeorm.config.ts"
   },
   "dependencies": {
+    "@discordjs/rest": "^2.6.0",
     "@nestjs/common": "^11.0.1",
     "@nestjs/config": "^4.0.1",
     "@nestjs/core": "^11.0.1",
@@ -36,6 +37,8 @@
     "class-validator": "^0.14.0",
     "compression": "^1.7.4",
     "cors": "^2.8.5",
+    "discord-api-types": "^0.38.37",
+    "discord.js": "^14.25.1",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "helmet": "^7.0.0",

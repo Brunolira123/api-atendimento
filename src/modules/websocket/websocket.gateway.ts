@@ -163,4 +163,61 @@ export class WebSocketGatewayService
       })),
     };
   }
+
+  @SubscribeMessage('discord:assumir')
+async handleDiscordAssumir(
+  @ConnectedSocket() client: Socket,
+  @MessageBody() data: { solicitacaoId: string; atendente: string; discordId: string },
+) {
+  const { solicitacaoId, atendente, discordId } = data;
+  
+  // Notificar todos os clientes
+  this.server.emit('solicitacao:assumida', {
+    type: 'discord_assumido',
+    solicitacaoId,
+    atendente,
+    discordId,
+    timestamp: new Date().toISOString(),
+  });
+
+  // Gerar URL do portal específica para Discord
+  const portalUrl = `http://localhost:3000/atendimento/${solicitacaoId}?atendente=${encodeURIComponent(atendente)}&discordId=${discordId}&source=discord`;
+  
+  client.emit('discord:assumido', {
+    success: true,
+    solicitacaoId,
+    portalUrl,
+    message: 'Atendimento assumido via Discord',
+  });
+
+  this.logger.log(`✅ ${atendente} (Discord) assumiu ${solicitacaoId}`);
+}
+
+ emitSolicitacaoAssumida(data: any) {
+    this.server.emit('solicitacao:assumida', {
+      type: 'discord_assumida',
+      ...data,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // Emite quando uma nova mensagem é enviada
+  emitNovaMensagem(data: any) {
+    this.server.emit('message:new', {
+      type: 'nova_mensagem',
+      data,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // Emite quando um atendimento é finalizado
+
+  // Emite quando há uma atualização de status
+  emitStatusUpdate(data: any) {
+    this.server.emit('status:update', {
+      type: 'status_update',
+      data,
+      timestamp: new Date().toISOString(),
+    });
+  }
 }
