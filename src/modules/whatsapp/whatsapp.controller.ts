@@ -1,60 +1,121 @@
-import { Controller, Get, Post, Body } from '@nestjs/common';
-import { WhatsAppService } from './whatsapp.service';
+// src/modules/whatsapp/controllers/whatsapp.controller.ts
+import { Controller, Get, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import { WhatsAppService } from '../whatsapp/services/whatsapp.service';
 
 @Controller('whatsapp')
 export class WhatsAppController {
   constructor(private readonly whatsappService: WhatsAppService) {}
 
   @Get('status')
+  @HttpCode(HttpStatus.OK)
   async getStatus() {
-    return this.whatsappService.getStatus();
+    return await this.whatsappService.getStatus();
   }
 
   @Post('send')
+  @HttpCode(HttpStatus.OK)
   async sendMessage(@Body() data: { to: string; message: string }) {
-    return this.whatsappService.enviarMensagem(data.to, data.message);
-  }
-
-  @Post('restart')
-  async restart() {
-    await this.whatsappService.restart();
-    return { message: 'WhatsApp reiniciando...' };
-  }
-
-  @Get('qr')
-  getQR() {
-    return { message: 'QR Code será exibido no terminal e enviado via WebSocket' };
-  }
-
-  @Get('test-ws')
-async testWebSocket() {
-  console.log('🧪 Testando conexão WebSocket...');
-  
-  // Verificar se wsGateway está disponível
-  const hasGateway = !!this.whatsappService['wsGateway'];
-  const hasServer = hasGateway && !!this.whatsappService['wsGateway'].server;
-  
-  if (hasServer) {
-    // Emitir evento de teste
-    this.whatsappService['wsGateway'].server.emit('test:event', {
-      message: 'Teste do WebSocket',
-      timestamp: new Date().toISOString(),
-    });
+    const result = await this.whatsappService.enviarMensagem(data.to, data.message);
+    
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error,
+        message: 'Falha ao enviar mensagem'
+      };
+    }
     
     return {
       success: true,
-      message: 'Evento de teste emitido',
-      hasGateway,
-      hasServer,
-      clientCount: this.whatsappService['wsGateway'].server.engine.clientsCount,
-    };
-  } else {
-    return {
-      success: false,
-      message: 'WebSocket não disponível',
-      hasGateway,
-      hasServer,
+      message: 'Mensagem enviada com sucesso'
     };
   }
-}
+
+  @Post('restart')
+  @HttpCode(HttpStatus.ACCEPTED)
+  async restart() {
+    // Inicia o restart em background
+    this.whatsappService.restart().catch(error => {
+      console.error('❌ Erro ao reiniciar WhatsApp:', error);
+    });
+    
+    return { 
+      success: true, 
+      message: 'WhatsApp está reiniciando...',
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  @Get('sessions')
+  @HttpCode(HttpStatus.OK)
+  async getSessions() {
+    return {
+      sessions: this.whatsappService.getSessoesAtivas(),
+      count: this.whatsappService.getSessoesAtivas().length,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  @Post('sessions/clear')
+  @HttpCode(HttpStatus.OK)
+  async clearSessions() {
+    const result = await this.whatsappService.limparSessoes();
+    return {
+      success: result.success,
+      message: `Sessões limpas: ${result.count} removidas`,
+      count: result.count,
+      timestamp: new Date().toISOString()
+    };
+  }
+
+  @Post('send/atendente')
+  @HttpCode(HttpStatus.OK)
+  async sendMessageAtendente(
+    @Body() data: { 
+      to: string; 
+      message: string; 
+      atendenteNome: string 
+    }
+  ) {
+    const result = await this.whatsappService.enviarMensagemAtendente(
+      data.to, 
+      data.message, 
+      data.atendenteNome
+    );
+    
+    if (!result.success) {
+      return {
+        success: false,
+        error: result.error,
+        message: 'Falha ao enviar mensagem do atendente'
+      };
+    }
+    
+    return {
+      success: true,
+      message: 'Mensagem do atendente enviada com sucesso'
+    };
+  }
+
+  @Get('health')
+  @HttpCode(HttpStatus.OK)
+  async healthCheck() {
+    const status = await this.whatsappService.getStatus();
+    
+    return {
+      status: 'operational',
+      whatsapp: {
+        connected: status.isConnected,
+        hasQr: status.hasQr,
+        user: status.whatsappInfo?.pushname || null,
+        phone: status.whatsappInfo?.wid?.user || null
+      },
+      sessions: {
+        active: status.sessoesAtivas,
+        total: this.whatsappService.getSessoesAtivas().length
+      },
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime()
+    };
+  }
 }
