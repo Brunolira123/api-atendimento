@@ -25,4 +25,36 @@ export class WhatsAppController {
   getQR() {
     return { message: 'QR Code será exibido no terminal e enviado via WebSocket' };
   }
+
+  @Get('test-ws')
+async testWebSocket() {
+  console.log('🧪 Testando conexão WebSocket...');
+  
+  // Verificar se wsGateway está disponível
+  const hasGateway = !!this.whatsappService['wsGateway'];
+  const hasServer = hasGateway && !!this.whatsappService['wsGateway'].server;
+  
+  if (hasServer) {
+    // Emitir evento de teste
+    this.whatsappService['wsGateway'].server.emit('test:event', {
+      message: 'Teste do WebSocket',
+      timestamp: new Date().toISOString(),
+    });
+    
+    return {
+      success: true,
+      message: 'Evento de teste emitido',
+      hasGateway,
+      hasServer,
+      clientCount: this.whatsappService['wsGateway'].server.engine.clientsCount,
+    };
+  } else {
+    return {
+      success: false,
+      message: 'WebSocket não disponível',
+      hasGateway,
+      hasServer,
+    };
+  }
+}
 }

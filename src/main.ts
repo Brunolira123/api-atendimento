@@ -9,9 +9,13 @@ async function bootstrap() {
 
   // Configuração CORS
   app.enableCors({
-    origin: ['http://localhost:5173', 'http://localhost:3000'],
+    origin: ['http://localhost:3001', 'http://localhost:3000'],
     credentials: true,
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    allowedHeaders: 'Content-Type, Authorization, X-Requested-With',
   });
+
+   app.setGlobalPrefix('api');
 
   // Pipes de validação
   app.useGlobalPipes(

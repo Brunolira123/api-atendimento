@@ -38,4 +38,5 @@ export class Conversation {
 
   @OneToMany(() => Message, (message) => message.conversation)
   messages: Message[];
+  
 }

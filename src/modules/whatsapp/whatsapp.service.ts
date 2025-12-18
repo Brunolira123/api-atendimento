@@ -63,7 +63,11 @@ export class WhatsAppService implements OnModuleDestroy {
   private configService: ConfigService,
   private webSocketGateway: WebSocketGatewayService,
   private discordService: DiscordService, // <-- ADICIONAR
-) {}
+) { console.log('🔍 [DEBUG] WhatsAppService construído:');
+  console.log('- wsGateway existe?', !!this.webSocketGateway);
+  console.log('- wsGateway tipo:', typeof this.webSocketGateway);
+  console.log('- wsGateway tem server?', this.webSocketGateway?.server ? 'Sim' : 'Não');
+  console.log('- wsGateway methods:', Object.keys(this.webSocketGateway || {}));}
 
   async initialize(): Promise<void> {
     this.logger.log('🔄 Inicializando WhatsApp Service...');
@@ -130,27 +134,45 @@ export class WhatsAppService implements OnModuleDestroy {
     });
 
     // Ready
-    this.client.on('ready', () => {
-      this.isConnected = true;
-      const userNumber = this.client.info?.wid?.user || 'Desconhecido';
+    // No evento 'ready' do WhatsApp:
+this.client.on('ready', () => {
+  this.isConnected = true;
+  const userNumber = this.client.info?.wid?.user || 'Desconhecido';
+  const userName = this.client.info?.pushname || 'Usuário WhatsApp';
 
-      this.logger.log(`✅ WhatsApp conectado: ${userNumber}`);
-
-      console.log('\n' + '='.repeat(60));
-      console.log('✅ SISTEMA PRONTO PARA ATENDIMENTO');
-      console.log(`📱 WhatsApp: ${userNumber}`);
-      console.log('🕒 Sistema: Online e operacional');
-      console.log('='.repeat(60) + '\n');
-
-      if (this.webSocketGateway) {
-        this.webSocketGateway.emitWhatsAppReady({
-          wid: this.client.info?.wid,
-          me: this.client.info?.me,
-          pushname: this.client.info?.pushname,
-        });
-      }
-    });
-
+  this.logger.log(`✅ WhatsApp conectado: ${userNumber}`);
+  
+  // ✅ VERIFICAÇÃO CRÍTICA - O gateway está pronto?
+  console.log('🔍 DEBUG WhatsAppService:');
+  console.log('- webSocketGateway existe?', !!this.webSocketGateway);
+  console.log('- webSocketGateway.server existe?', !!this.webSocketGateway?.server);
+  console.log('- Número de clientes conectados:', this.webSocketGateway?.server?.engine?.clientsCount || 0);
+  
+  // ✅ EMITE DIRETAMENTE se tiver server
+  if (this.webSocketGateway?.server) {
+  const eventData = {
+    user: userName,
+    phoneNumber: userNumber,
+    wid: this.client.info?.wid,
+    pushname: this.client.info?.pushname,
+    status: 'connected',
+    timestamp: new Date().toISOString(),
+    source: 'whatsapp_service'
+  };
+  
+  console.log('📤 Emitindo whatsapp:connected:', eventData);
+  
+  // SALVA O STATUS NO GATEWAY
+  if (this.webSocketGateway.saveWhatsAppStatus) {
+    this.webSocketGateway.saveWhatsAppStatus(eventData);
+  }
+  
+  // Emite para TODOS os clientes (se houver)
+  this.webSocketGateway.server.emit('whatsapp:connected', eventData);
+  
+  this.logger.log(`✅ Eventos emitidos para ${this.webSocketGateway.server.engine.clientsCount} clientes`);
+}
+});
     // Mensagem recebida
     this.client.on('message', async (message: any) => {
       await this.handleIncomingMessage(message);
@@ -749,4 +771,25 @@ _(Descreva detalhadamente o que está acontecendo)_
     
     return result;
   }
+
+  private async safeEmit(event: string, data: any, retryCount = 0): Promise<void> {
+  if (!this.webSocketGateway || !this.webSocketGateway.server) {
+    this.logger.warn(`⚠️ Gateway não pronto para emitir ${event}. Tentativa ${retryCount + 1}/3`);
+    
+    if (retryCount < 2) {
+      setTimeout(() => {
+        this.safeEmit(event, data, retryCount + 1);
+      }, 1000 * (retryCount + 1));
+    }
+    return;
+  }
+  
+  try {
+    this.webSocketGateway.server.emit(event, data);
+    this.logger.log(`✅ Evento ${event} emitido`);
+  } catch (error) {
+    this.logger.error(`❌ Erro ao emitir ${event}: ${error.message}`);
+  }
+}
+
 }

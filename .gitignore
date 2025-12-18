@@ -2,7 +2,7 @@
 /dist
 /node_modules
 /build
-
+/whatsapp-sessions
 # Logs
 logs
 *.log
