@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DiscordService } from '@modules/discord/discord.service';
+import { DiscordService } from '@modules/discord/services/discord.service';
 import { IWhatsAppNotificationService } from '../../../shared/interfaces/whatsapp.interface';
 
 @Injectable()
