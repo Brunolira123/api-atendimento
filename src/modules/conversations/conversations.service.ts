@@ -27,6 +27,41 @@ export class ConversationsService {
     private conversationRepository: Repository<Conversation>,
   ) {}
 
+    async getMessagesBySolicitacaoId(
+    solicitacaoId: string, 
+    limit: number = 50
+  ): Promise<any[]> {
+    try {
+      // Buscar a solicitação
+      const solicitacao = await this.solicitacaoRepository.findOne({
+        where: { solicitacaoId },
+      });
+
+      if (!solicitacao) {
+        return [];
+      }
+
+      // Se você tem mensagens separadas, busque aqui
+      // Por enquanto, retornar apenas a descrição inicial
+      return [
+        {
+          id: `init_${solicitacaoId}`,
+          solicitacaoId,
+          content: solicitacao.descricao,
+          direction: 'incoming',
+          atendente_discord: null,
+          timestamp: solicitacao.createdAt,
+          status: 'delivered',
+          type: 'initial',
+        }
+      ];
+    } catch (error) {
+      this.logger.error(`Erro ao buscar mensagens: ${error.message}`);
+      return [];
+    }
+  }
+
+
   // ========== MÉTODOS DE BUSCA ==========
 
   async findAll(filters?: ConversationFilters): Promise<any[]> {

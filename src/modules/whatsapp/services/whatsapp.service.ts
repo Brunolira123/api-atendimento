@@ -11,6 +11,7 @@ import { WebSocketGatewayService } from '../../websocket/websocket.gateway';
 import { WhatsAppSessionService } from '../services/whatsapp.session.service';
 import { WhatsAppMessageService } from '../services/whatsapp.message.service';
 import { WhatsAppNotificationService } from '../services/whatsapp-notification.service';
+import { ConversationsService } from '@modules/conversations/conversations.service';
 
 @Injectable()
 export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
@@ -27,6 +28,7 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
     private readonly webSocketGateway: WebSocketGatewayService,
     private readonly sessionService: WhatsAppSessionService,
     private readonly notificationService: WhatsAppNotificationService,
+    private readonly conversationsService : ConversationsService
   ) {}
 
   async onModuleInit() {
@@ -76,6 +78,31 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
       throw error;
     }
   }
+
+  private async mandarParaPortal(whatsappId: string, mensagem: string) {
+  // 1. Busca a solicitação desse WhatsApp
+  const solicitacao = await this.solicitacaoRepository.findOne({
+    where: { whatsappId, status: 'em_atendimento' }
+  });
+  
+  if (!solicitacao) return;
+  
+  // 2. Salva no banco
+  await this.conversationsService.addMessage(solicitacao.solicitacaoId, {
+    content: mensagem,
+    direction: 'incoming'
+  });
+  
+  // 3. Manda pro WebSocket (simples, broadcast)
+  if (this.webSocketGateway?.server) {
+    this.webSocketGateway.server.emit('message:new', {
+      solicitacaoId: solicitacao.solicitacaoId,
+      mensagem: mensagem,
+      de: 'cliente',
+      timestamp: new Date()
+    });
+  }
+}
 
   private setupEventHandlers(): void {
     // QR Code
@@ -186,6 +213,7 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
         this.logger.warn(`📭 Número inválido: ${whatsappId}`);
         return;
       }
+      
 
       this.logger.log(`📩 Mensagem de ${numero}: ${texto.substring(0, 100)}`);
 
@@ -197,6 +225,11 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
       } else {
         await this.processarMensagem(numero, texto, sessao);
       }
+
+    if (sessao && sessao.estado === 'finalizada') {
+      await this.mandarParaPortal(numero, texto);
+    return;
+  }
     } catch (error: any) {
       this.logger.error(`❌ Erro ao processar mensagem: ${error.message}`);
     }
@@ -386,6 +419,23 @@ export class WhatsAppService implements OnModuleInit, OnModuleDestroy {
         descricaoProblema: sessao.dados.descricaoProblema,
         opcaoEscolhida: sessao.dados.opcaoEscolhida,
       });
+
+         if (this.webSocketGateway?.server) {
+      this.webSocketGateway.server
+        .to(`solicitacao:${solicitacaoId}`)
+        .emit('message:new', {
+          type: 'nova_mensagem',
+          data: {
+            id: `msg_${Date.now()}`,
+            solicitacaoId,
+            content: mensagemCliente, 
+            direction: 'outgoing',
+            atendente_discord: 'Sistema',
+            timestamp: new Date(),
+          },
+          timestamp: new Date().toISOString(),
+        });
+      }
 
       // Notifica via WebSocket
       if (this.webSocketGateway) {

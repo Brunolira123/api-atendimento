@@ -138,4 +138,45 @@ export class ConversationManagerService {
     
     return await this.solicitacaoRepository.save(solicitacao);
   }
+
+  async getSolicitacao(solicitacaoId: string): Promise<Solicitacao | null> {
+  try {
+    return await this.solicitacaoRepository.findOne({
+      where: { solicitacaoId },
+    });
+  } catch (error) {
+    this.logger.error(`Erro ao buscar solicitação: ${error.message}`);
+    return null;
+  }
+  }
+
+  async getChatHistory(solicitacaoId: string): Promise<any[]> {
+  try {
+    const solicitacao = await this.solicitacaoRepository.findOne({
+      where: { solicitacaoId },
+    });
+
+    if (!solicitacao) {
+      return [];
+    }
+    
+    const historicoBasico = [
+      {
+        id: `sys_${solicitacaoId}`,
+        solicitacaoId,
+        content: `Solicitação criada: ${solicitacao.descricao}`,
+        direction: 'incoming',
+        atendente_discord: null,
+        timestamp: solicitacao.createdAt,
+        status: 'delivered',
+        type: 'system',
+      }
+    ];
+
+    return historicoBasico;
+  } catch (error) {
+    this.logger.error(`Erro ao buscar histórico: ${error.message}`);
+    return [];
+  }
+  }
 }

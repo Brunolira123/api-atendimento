@@ -1,3 +1,4 @@
+// whatsapp.module.ts - ATUALIZADO
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { WhatsAppService } from './services/whatsapp.service';
@@ -9,12 +10,14 @@ import { Conversation } from '../../shared/entities/conversation.entity';
 import { DiscordModule } from '../discord/discord.module';
 import { WebSocketModule } from '../websocket/websocket.module';
 import { WhatsAppController } from './whatsapp.controller';
+import { ConversationsModule } from '@modules/conversations/conversations.module'; // ✅ ADICIONE
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Solicitacao, Conversation]),
     DiscordModule,
     WebSocketModule,
+    ConversationsModule, // ✅ ADICIONE ESTA LINHA
   ],
   controllers: [WhatsAppController],
   providers: [

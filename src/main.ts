@@ -1,21 +1,26 @@
+// main.ts - VERSÃO SIMPLIFICADA
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { IoAdapter } from '@nestjs/platform-socket.io';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
-
+  
+  // 🔥 Configuração SIMPLES do WebSocket
+  app.useWebSocketAdapter(new IoAdapter(app));
+  
   // Configuração CORS
   app.enableCors({
-    origin: ['http://localhost:3001', 'http://localhost:3000'],
+    origin: ['http://localhost:5173', 'http://localhost:3000', 'http://localhost:3001'],
     credentials: true,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     allowedHeaders: 'Content-Type, Authorization, X-Requested-With',
   });
 
-   app.setGlobalPrefix('api');
+  app.setGlobalPrefix('api');
 
   // Pipes de validação
   app.useGlobalPipes(
@@ -32,12 +37,16 @@ async function bootstrap() {
   console.log(`
   🚀 VR SOFTWARE - SISTEMA DE ATENDIMENTO
   ========================================
-  📡 Servidor: http://localhost:${port}
+  📡 HTTP: http://localhost:${port}
+  🔌 WebSocket: ws://localhost:${port}
+  📡 Namespace: /atendimento
   🔗 Health: http://localhost:${port}/health
-  🚀 Portal: http://localhost:${port}/atendimento/SOL123456
-  🤖 QR Code será exibido acima ↑
   ========================================
   `);
+  
+  // IMPORTANTE: Verifique se o WebSocket está funcionando
+  console.log('\n🔍 Para testar WebSocket, execute:');
+  console.log('node test-3001-simple.js');
 }
 
 bootstrap();

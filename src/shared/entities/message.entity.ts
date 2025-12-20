@@ -1,6 +1,7 @@
 import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
 import { Conversation } from './conversation.entity';
 
+// shared/entities/message.entity.ts (se você tiver)
 @Entity('messages')
 export class Message {
   @PrimaryGeneratedColumn('uuid')
@@ -22,6 +23,19 @@ export class Message {
   @Column({ name: 'atendente_discord', length: 100, nullable: true })
   atendenteDiscord: string;
 
+  @Column({ 
+    length: 20, 
+    default: 'sent',
+    enum: ['sent', 'delivered', 'read', 'failed']
+  })
+  status: 'sent' | 'delivered' | 'read' | 'failed';
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
+
+  @Column({ name: 'delivered_at', nullable: true })
+  deliveredAt: Date;
+
+  @Column({ name: 'read_at', nullable: true })
+  readAt: Date;
 }

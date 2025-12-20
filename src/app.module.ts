@@ -24,8 +24,6 @@ import { ConversationsModule } from '@modules/conversations/conversations.module
       autoLoadEntities: true,
       synchronize: process.env.NODE_ENV !== 'production',
     }),
-    
-    // Módulos da aplicação
     WhatsAppModule,
     WebSocketModule,
     AtendimentoModule,

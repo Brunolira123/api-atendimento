@@ -58,7 +58,7 @@ export class DiscordButtonHandler {
   }
 
   /**
-   * Handler para botão "Assumir"
+   * Handler para botão "Assumir" (SIMPLIFICADO)
    */
   private async handleAssumir(interaction: ButtonInteraction, solicitacaoId: string): Promise<void> {
     await interaction.deferUpdate();
@@ -68,20 +68,24 @@ export class DiscordButtonHandler {
     
     this.logger.log(`👨‍💻 ${analista} assumindo: ${solicitacaoId}`);
 
-    // Notificar WebSocket
+    // ✅ GERAR URL DO PORTAL
+    const portalUrl = `${this.frontendUrl}/atendimento/${solicitacaoId}?atendente=${encodeURIComponent(analista)}&discordId=${analistaId}&source=discord`;
+
+    // ✅ NOTIFICAR WEBSOCKET (URL COMPLETA)
     await this.webSocketGateway.emit('discord:assumido', {
       solicitacaoId,
       atendente: analista,
       discordId: analistaId,
+      portalUrl, // 🔴 URL SEM TOKEN POR ENQUANTO
       timestamp: new Date().toISOString(),
     });
 
-    // Atualizar embed e botões
+    // ✅ Atualizar embed e botões
     await this.updateEmbedParaAtendimento(interaction, analista, analistaId);
     
-    // Confirmar no canal
+    // ✅ Confirmar no canal COM LINK
     await interaction.followUp({
-      content: `✅ **ATENDIMENTO ASSUMIDO!**\n\n<@${analistaId}> assumiu a solicitação \`${solicitacaoId}\``,
+      content: `✅ **ATENDIMENTO ASSUMIDO!**\n\n<@${analistaId}> assumiu a solicitação \`${solicitacaoId}\`\n\n🔗 Portal: ${portalUrl}`,
       ephemeral: false,
     });
   }
