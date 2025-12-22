@@ -1,4 +1,4 @@
-// src/websocket.adapter.ts
+
 import { IoAdapter } from '@nestjs/platform-socket.io';
 import { ServerOptions } from 'socket.io';
 

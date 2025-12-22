@@ -62,10 +62,26 @@ export class AtendimentoHandler {
     const atendenteNome = this.websocketManager.getAtendenteNome(client);
 
     try {
-      const solicitacao = await this.conversationManager.assumirSolicitacao(
-        solicitacaoId,
-        atendenteNome
-      );
+      // 🔥 SOLUÇÃO: Obter analistaId do socket ou usar fallback
+      const analistaId = this.getAnalistaIdFromSocket(client);
+      
+      // Usar o método correto baseado na disponibilidade do analistaId
+      let solicitacao;
+      
+      if (analistaId) {
+        // Usar o novo método com analistaId
+        solicitacao = await this.conversationManager.assumirSolicitacao(
+          solicitacaoId,
+          atendenteNome,
+          analistaId
+        );
+      } else {
+        // Usar método de compatibilidade (para sistemas antigos)
+        solicitacao = await this.conversationManager.assumirSolicitacaoDiscord(
+          solicitacaoId,
+          atendenteNome
+        );
+      }
 
       const result = {
         type: 'atendimento_assumido',
@@ -73,6 +89,7 @@ export class AtendimentoHandler {
         atendente: atendenteNome,
         whatsappId: solicitacao.whatsappId,
         atendenteSocketId: client.id,
+        analistaId: analistaId || null,
         timestamp: new Date().toISOString(),
       };
 
@@ -82,15 +99,34 @@ export class AtendimentoHandler {
       // Atualizar lista de conversas
       await this.conversationManager.enviarConversasAtualizadas(server);
 
+      // Gerar URL do portal baseado no tipo de autenticação
+      let portalUrl = `http://localhost:3000/atendimento/${solicitacaoId}`;
+      const params = new URLSearchParams();
+      
+      if (analistaId) {
+        // Sistema novo com login de analistas
+        params.append('analistaId', analistaId.toString());
+        params.append('analistaNome', encodeURIComponent(atendenteNome));
+      } else {
+        // Sistema antigo (Discord)
+        params.append('atendente', encodeURIComponent(atendenteNome));
+        if (client['discordId']) {
+          params.append('discordId', client['discordId']);
+        }
+      }
+      
+      portalUrl += `?${params.toString()}`;
+
       // Resposta específica para o cliente
       client.emit('solicitacao:assumida:success', {
         solicitacaoId,
-        portalUrl: `http://localhost:3000/atendimento/${solicitacaoId}?atendente=${encodeURIComponent(atendenteNome)}`,
+        portalUrl,
         message: 'Solicitação assumida com sucesso',
+        analistaId,
         timestamp: new Date().toISOString(),
       });
 
-      this.logger.log(`✅ ${atendenteNome} assumiu ${solicitacaoId}`);
+      this.logger.log(`✅ ${atendenteNome} ${analistaId ? `(ID: ${analistaId})` : ''} assumiu ${solicitacaoId}`);
 
       return {
         evento: 'solicitacao:assumida',
@@ -155,5 +191,51 @@ export class AtendimentoHandler {
       });
       return null;
     }
+  }
+
+  // 🔧 MÉTODO AUXILIAR: Obter analistaId do socket
+ private getAnalistaIdFromSocket(client: Socket): number | null {
+  try {
+    // 1. Tentar obter do client['user'] (sistema novo com login via API)
+    if (client['user'] && client['user'].id) {
+      return client['user'].id;
+    }
+    
+    // 2. Tentar obter do client['analistaId'] (se setado manualmente)
+    if (client['analistaId']) {
+      return client['analistaId'];
+    }
+    
+    // 3. Tentar obter do websocketManager (AGORA FUNCIONA!)
+    const atendenteData = this.websocketManager.getAtendente(client.id);
+    if (atendenteData && atendenteData.analistaId) {
+      return atendenteData.analistaId;
+    }
+    
+    // 4. Tentar usar o método direto do websocketManager
+    const analistaIdFromManager = this.websocketManager.getAnalistaId(client);
+    if (analistaIdFromManager) {
+      return analistaIdFromManager;
+    }
+    
+    // 5. Se tiver discordId, tentar mapear para analistaId
+    const discordId = client['discordId'];
+    if (discordId) {
+      // Implementação futura: buscar analista pelo discordId
+      // Por enquanto, retorna null
+      return null;
+    }
+    
+    return null;
+  } catch (error) {
+    this.logger.warn(`⚠️ Erro ao obter analistaId: ${error.message}`);
+    return null;
+  }
+}
+
+  // 🔧 MÉTODO PARA SETAR ANALISTAID NO SOCKET (útil para integração)
+  setAnalistaIdOnSocket(client: Socket, analistaId: number): void {
+    client['analistaId'] = analistaId;
+    this.logger.log(`🔗 Analista ID ${analistaId} vinculado ao socket ${client.id}`);
   }
 }

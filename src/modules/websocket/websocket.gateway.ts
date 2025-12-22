@@ -32,7 +32,7 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
   @WebSocketServer()
   server: Server;
 
-    afterInit() {
+  afterInit() {
     console.log('🔥 WebSocketGateway inicializado');
     console.log(`📡 Namespace: /atendimento`);
     
@@ -41,13 +41,14 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
     });
   }
 
-
   handleConnection(client: Socket) {
     console.log(`🔌 Nova conexão: ${client.id}`);
     this.websocketManager.handleConnection(client, this.server);
   }
 
-  
+  async handleDisconnect(client: Socket) {
+    await this.websocketManager.handleDisconnect(client, this.server);
+  }
 
   private readonly logger = new Logger(WebSocketGatewayService.name);
 
@@ -59,58 +60,59 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
     private readonly whatsappEvents: WhatsAppEventsService,
     private readonly conversationManager: ConversationManagerService,
     private readonly conversationsService: ConversationsService,
-    private readonly jwtService: JwtService // ✅ Adicionado para auth
+    private readonly jwtService: JwtService
   ) {}
 
-  // ========== CONEXÃO BÁSICA ==========
-
-  /*
-  async handleConnection(client: Socket) {
-    await this.websocketManager.handleConnection(client, this.server);
-  }
-*/
-  async handleDisconnect(client: Socket) {
-    await this.websocketManager.handleDisconnect(client, this.server);
-  }
-
-  // ========== AUTH VALIDATION (PASSO 3) ==========
+  // ========== AUTH VALIDATION (AGORA PARA ANALISTA LOGIN) ==========
   @SubscribeMessage('auth:validate')
   async handleAuthValidate(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { token: string }
   ) {
     try {
-      const payload = this.jwtService.verifyDiscordToken(data.token);
+      // Agora valida token de SESSÃO do analista (não mais do Discord)
+      const payload = this.jwtService.verifyAnalistaToken(data.token);
       
       if (!payload) {
         return {
           evento: 'auth:invalid',
-          data: { valid: false, reason: 'Token inválido' }
+          data: { valid: false, reason: 'Token inválido ou expirado' }
         };
       }
 
-      // Verificar se a solicitação ainda existe e está ativa
-      const solicitacao = await this.conversationManager.getSolicitacao(
-        payload.solicitacaoId
-      );
-
-      if (!solicitacao) {
+      // Verificar se o analista ainda está ativo
+      const analista = await this.getAnalistaPorId(payload.id);
+      
+      if (!analista || !analista.ativo) {
         return {
           evento: 'auth:invalid',
-          data: { valid: false, reason: 'Solicitação não encontrada' }
+          data: { valid: false, reason: 'Analista não encontrado ou inativo' }
         };
       }
 
-      // Tudo OK
-      client['user'] = payload; // Salvar no client
+      // Tudo OK - salvar dados do analista no client
+      client['user'] = {
+        id: analista.id,
+        username: analista.username,
+        nome: analista.nome_completo,
+        email: analista.email,
+        role: analista.role,
+        departamento_id: analista.departamento_id,
+      };
+      
+      // Enviar notificação de sucesso
+      this.logger.log(`🔐 Analista autenticado: ${analista.nome_completo} (${analista.username})`);
       
       return {
         evento: 'auth:valid',
         data: {
           valid: true,
-          solicitacaoId: payload.solicitacaoId,
-          atendenteNome: payload.atendenteNome,
-          discordId: payload.discordId,
+          analista: {
+            id: analista.id,
+            username: analista.username,
+            nome: analista.nome_completo,
+            role: analista.role,
+          },
           expiresAt: payload.exp ? new Date(payload.exp * 1000) : null,
         }
       };
@@ -124,7 +126,118 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
     }
   }
 
-  // ========== CHAT ROOMS (PASSO 1) ==========
+  // ========== SOLICITAÇÕES DISPONÍVEIS (DASHBOARD) ==========
+  @SubscribeMessage('solicitacoes:disponiveis')
+  @UseGuards(WsAuthGuard)
+  async handleSolicitacoesDisponiveis(@ConnectedSocket() client: Socket) {
+    try {
+      const analista = client['user'];
+      
+      // Buscar solicitações pendentes sem analista
+      const solicitacoes = await this.conversationManager.getSolicitacoesDisponiveis();
+      
+      // Formatar para o frontend
+      const disponiveis = solicitacoes.map(sol => ({
+        id: sol.solicitacaoId,
+        razaoSocial: sol.razaoSocial,
+        clienteNome: sol.nomeResponsavel,
+        tipoProblema: sol.tipoProblema,
+        descricao: sol.descricao?.substring(0, 100) + (sol.descricao?.length > 100 ? '...' : ''),
+        whatsappId: sol.whatsappId,
+        criadoEm: sol.createdAt,
+        tempoEspera: this.calcularTempoEspera(sol.createdAt),
+        prioridade: this.calcularPrioridade(sol.tipoProblema, sol.createdAt),
+      }));
+      
+      client.emit('solicitacoes:disponiveis:lista', {
+        success: true,
+        solicitacoes: disponiveis,
+        count: disponiveis.length,
+        timestamp: new Date().toISOString(),
+      });
+      
+      return {
+        evento: 'solicitacoes:disponiveis:lista',
+        data: { solicitacoes: disponiveis }
+      };
+      
+    } catch (error) {
+      this.logger.error(`❌ Erro ao buscar solicitações: ${error.message}`);
+      client.emit('solicitacoes:disponiveis:error', {
+        message: error.message,
+        timestamp: new Date().toISOString(),
+      });
+      return null;
+    }
+  }
+
+  // ========== ASSUMIR SOLICITAÇÃO (DASHBOARD) ==========
+  @SubscribeMessage('solicitacao:assumir')
+  @UseGuards(WsAuthGuard)
+  async handleAssumirSolicitacao(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { solicitacaoId: string }
+  ) {
+    try {
+      const analista = client['user'];
+      
+      // 1. Verificar se ainda está disponível
+      const solicitacao = await this.conversationManager.getSolicitacao(data.solicitacaoId);
+      
+      if (!solicitacao) {
+        throw new Error('Solicitação não encontrada');
+      }
+      
+      if (solicitacao.atendente_id) {
+        throw new Error('Esta solicitação já foi assumida por outro analista');
+      }
+      
+      // 2. Assumir a solicitação
+      await this.conversationManager.assumirSolicitacao(
+        data.solicitacaoId,
+        analista.nome,
+        analista.id
+      );
+      
+      // 3. Notificar todos os analistas para remover da lista
+      this.server.emit('solicitacao:remover_disponivel', {
+        solicitacaoId: data.solicitacaoId,
+        analistaNome: analista.nome,
+        timestamp: new Date().toISOString(),
+      });
+      
+      // 4. Notificar analista específico com sucesso
+      client.emit('solicitacao:assumida:success', {
+        success: true,
+        solicitacaoId: data.solicitacaoId,
+        message: 'Solicitação assumida com sucesso!',
+        redirectTo: `/chat/${data.solicitacaoId}`,
+        timestamp: new Date().toISOString(),
+      });
+      
+      this.logger.log(`✅ ${analista.nome} assumiu ${data.solicitacaoId}`);
+      
+      return {
+        evento: 'solicitacao:assumida',
+        data: {
+          solicitacaoId: data.solicitacaoId,
+          analista: analista.nome,
+          redirectTo: `/chat/${data.solicitacaoId}`,
+        }
+      };
+      
+    } catch (error) {
+      this.logger.error(`❌ Erro ao assumir: ${error.message}`);
+      client.emit('solicitacao:assumir:error', {
+        message: error.message,
+        solicitacaoId: data.solicitacaoId,
+        timestamp: new Date().toISOString(),
+      });
+      return null;
+    }
+  }
+
+  // ========== CHAT ROOMS ==========
   @SubscribeMessage('chat:subscribe')
   @UseGuards(WsAuthGuard)
   async handleSubscribe(
@@ -132,33 +245,50 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
     @MessageBody() data: { solicitacaoId: string }
   ) {
     try {
-      // Agora temos client['user'] com os dados do token
-      const user = client['user']; // { solicitacaoId, atendenteNome, discordId, discordTag }
+      const analista = client['user'];
       
-      // Verificar se o token corresponde à sala que está tentando acessar
-      if (user.solicitacaoId !== data.solicitacaoId) {
-        throw new Error('Acesso não autorizado a esta conversa');
-      }
-
-      // Validar se o atendente tem acesso a esta solicitação
       const solicitacao = await this.conversationManager.getSolicitacao(data.solicitacaoId);
       
       if (!solicitacao) {
         throw new Error('Solicitação não encontrada');
       }
       
-      if (solicitacao.atendenteDiscord && solicitacao.atendenteDiscord !== user.atendenteNome) {
-        // Opcional: permitir mesmo se não for o atendente?
-        // throw new Error('Você não tem acesso a esta conversa');
+      // 🔥 VERIFICAÇÃO: Analista precisa ser o responsável ou ter permissão
+      if (solicitacao.atendente_id && solicitacao.atendente_id !== analista.id) {
+        const podeAcessar = await this.verificarPermissaoAcesso(
+          analista.id, 
+          solicitacao.atendente_id, 
+          solicitacao.solicitacaoId
+        );
+        
+        if (!podeAcessar) {
+          throw new Error('Esta solicitação já está sendo atendida por outro analista');
+        }
+      }
+      
+      // 🔄 ATUALIZAR SOLICITAÇÃO (se ainda não tem analista)
+      if (!solicitacao.atendente_id) {
+        await this.conversationManager.assumirSolicitacao(
+          data.solicitacaoId,
+          analista.nome,
+          analista.id
+        );
+        
+        this.server.emit('solicitacao:assumida', {
+          type: 'analista_assumiu',
+          solicitacaoId: data.solicitacaoId,
+          analistaId: analista.id,
+          analistaNome: analista.nome,
+          timestamp: new Date().toISOString(),
+        });
       }
       
       // Entrar na sala
       client.join(`solicitacao:${data.solicitacaoId}`);
-
-      // 🔄 CARREGAR HISTÓRICO AUTOMATICAMENTE
+      
+      // 🔄 CARREGAR HISTÓRICO
       const messages = await this.conversationManager.getChatHistory(data.solicitacaoId);
       
-      // Adicionar mensagens do ConversationsService se existir
       if (this.conversationsService) {
         const moreMessages = await this.conversationsService.getMessagesBySolicitacaoId(
           data.solicitacaoId,
@@ -166,27 +296,36 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
         );
         messages.push(...moreMessages);
       }
-
-      // Ordenar por timestamp
+      
       messages.sort((a, b) => 
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
-
-      // Enviar histórico para o cliente
+      
+      // 🎯 Enviar histórico + informações
       client.emit('chat:history:loaded', {
         success: true,
         solicitacaoId: data.solicitacaoId,
+        solicitacao: {
+          id: solicitacao.solicitacaoId,
+          razaoSocial: solicitacao.razaoSocial,
+          cnpj: solicitacao.cnpj,
+          clienteNome: solicitacao.nomeResponsavel,
+          tipoProblema: solicitacao.tipoProblema,
+          status: solicitacao.status,
+          whatsappId: solicitacao.whatsappId,
+          criadoEm: solicitacao.createdAt,
+          atendenteAtual: solicitacao.atendenteDiscord || analista.nome,
+        },
         messages,
         count: messages.length,
         timestamp: new Date().toISOString(),
       });
       
-      // Log
-      this.logger.log(`👥 ${user.atendenteNome} entrou na sala: ${data.solicitacaoId}`);
+      this.logger.log(`👥 ${analista.nome} entrou na sala: ${data.solicitacaoId}`);
       
-      // Notificar outros na mesma sala (opcional)
       this.server.to(`solicitacao:${data.solicitacaoId}`).emit('chat:user_joined', {
-        atendente: user.atendenteNome,
+        analistaId: analista.id,
+        analistaNome: analista.nome,
         solicitacaoId: data.solicitacaoId,
         timestamp: new Date().toISOString(),
       });
@@ -197,14 +336,19 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
           success: true,
           solicitacaoId: data.solicitacaoId,
           message: 'Conectado ao chat',
-          atendente: user.atendenteNome
+          analista: {
+            id: analista.id,
+            nome: analista.nome,
+            username: analista.username,
+          }
         }
       };
       
     } catch (error) {
       this.logger.error(`❌ Erro ao entrar na sala: ${error.message}`);
-      client.emit('error', {
+      client.emit('chat:subscribe:error', {
         message: error.message,
+        solicitacaoId: data.solicitacaoId,
         timestamp: new Date().toISOString(),
       });
       return null;
@@ -217,23 +361,23 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { solicitacaoId: string }
   ) {
-    const user = client['user'];
+    const analista = client['user'];
     
     client.leave(`solicitacao:${data.solicitacaoId}`);
     
-    this.logger.log(`👥 ${user?.atendenteNome || 'Cliente'} saiu da sala: ${data.solicitacaoId}`);
+    this.logger.log(`👥 ${analista?.nome} saiu da sala: ${data.solicitacaoId}`);
     
     return {
       evento: 'chat:unsubscribed',
       data: { 
         success: true, 
         solicitacaoId: data.solicitacaoId,
-        atendente: user?.atendenteNome 
+        analista: analista?.nome 
       }
     };
   }
 
-  // ========== CHAT HISTORY (PASSO 2) ==========
+  // ========== CHAT HISTORY ==========
   @SubscribeMessage('chat:history')
   @UseGuards(WsAuthGuard)
   async handleChatHistory(
@@ -241,19 +385,16 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
     @MessageBody() data: { solicitacaoId: string; limit?: number }
   ) {
     try {
-      const user = client['user'];
+      const analista = client['user'];
       
-      // Validar acesso
       const solicitacao = await this.conversationManager.getSolicitacao(data.solicitacaoId);
       
       if (!solicitacao) {
         throw new Error('Solicitação não encontrada');
       }
 
-      // Buscar histórico
       const messages = await this.conversationManager.getChatHistory(data.solicitacaoId);
 
-      // Adicionar do ConversationsService se existir
       if (this.conversationsService) {
         const moreMessages = await this.conversationsService.getMessagesBySolicitacaoId(
           data.solicitacaoId,
@@ -262,12 +403,10 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
         messages.push(...moreMessages);
       }
 
-      // Ordenar por timestamp
       messages.sort((a, b) => 
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
       );
 
-      // Enviar para o cliente
       client.emit('chat:history:loaded', {
         success: true,
         solicitacaoId: data.solicitacaoId,
@@ -276,7 +415,7 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
         timestamp: new Date().toISOString(),
       });
 
-      this.logger.log(`📜 Histórico enviado para ${user.atendenteNome}: ${data.solicitacaoId} (${messages.length} mensagens)`);
+      this.logger.log(`📜 Histórico enviado para ${analista.nome}: ${data.solicitacaoId} (${messages.length} mensagens)`);
 
       return {
         evento: 'chat:history:loaded',
@@ -297,45 +436,21 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
     }
   }
 
-  // ========== HANDLERS DE ATENDIMENTO ==========
-  @SubscribeMessage('atendente:login')
-  async handleLogin(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: any,
-  ) {
-    return this.atendimentoHandler.handleLogin(client, this.server, data);
-  }
-
-  @SubscribeMessage('solicitacao:assumir')
-  async handleAssumirSolicitacao(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: any,
-  ) {
-    return this.atendimentoHandler.handleAssumirSolicitacao(client, this.server, data);
-  }
-
-  @SubscribeMessage('solicitacao:finalizar')
-  async handleFinalizarSolicitacao(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: any,
-  ) {
-    return this.atendimentoHandler.handleFinalizarSolicitacao(client, this.server, data);
-  }
-
-  // ========== HANDLERS DE MENSAGEM ==========
+  // ========== MÉTODOS DE MENSAGEM ==========
   @SubscribeMessage('mensagem:enviar')
   @UseGuards(WsAuthGuard)
   async handleEnviarMensagem(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: any,
   ) {
-    // Adicionar atendente do token
-    const user = client['user'];
-    data.atendenteNome = user.atendenteNome;
+    const analista = client['user'];
+    data.atendenteNome = analista.nome;
+    data.analistaId = analista.id;
     
     return this.mensagemHandler.handleEnviarMensagem(client, this.server, data);
   }
 
+  // ========== EVENTOS EXISTENTES (mantidos para compatibilidade) ==========
   @SubscribeMessage('whatsapp:simulate')
   async handleSimulateMessage(
     @ConnectedSocket() client: Socket,
@@ -344,29 +459,13 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
     return this.mensagemHandler.handleSimulateMessage(client, this.server, data);
   }
 
-  // ========== HANDLERS DO DISCORD ==========
-  @SubscribeMessage('discord:assumir')
-  async handleDiscordAssumir(
-    @ConnectedSocket() client: Socket,
-    @MessageBody() data: any,
-  ) {
-    return this.discordHandler.handleDiscordAssumir(client, this.server, data);
-  }
-
-  // ========== TESTE ==========
-   @SubscribeMessage('whatsapp:test')
+  @SubscribeMessage('whatsapp:test')
   handleWhatsAppTest(
     @ConnectedSocket() client: Socket,
     @MessageBody() data: any,
   ) {
     this.logger.log(`🧪 Teste WhatsApp recebido de ${client.id}`);
     
-    // 🔍 ADICIONE ESTE LOG:
-    console.log('📤 Emitindo whatsapp:test_response...');
-    console.log('Client ID:', client.id);
-    console.log('Server exists?', !!this.server);
-    
-    // Verifique se o server está definido
     if (!this.server) {
       this.logger.error('❌ Server não está definido!');
       return {
@@ -393,42 +492,31 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
     };
   }
 
-
   // ========== MÉTODOS PÚBLICOS PARA WHATSAPPSERVICE ==========
   
-  // 1. Método para emitir QR Code (que estava faltando)
   emitQRCode(qrCode: string) {
     this.whatsappEvents.emitQRCode(this.server, qrCode);
   }
 
-  // 2. Método para salvar status do WhatsApp
   saveWhatsAppStatus(data: any) {
     this.websocketManager.saveWhatsAppStatus(data);
   }
 
-  // 3. Método para emitir nova solicitação
   emitNovaSolicitacao(solicitacao: any) {
-    // Converte para o formato de conversa
     const conversa = this.conversationManager.mapearParaConversa(solicitacao);
     
-    // Emite para TODOS (para lista geral)
+    // 🔥 NOTIFICA TODOS OS ANALISTAS CONECTADOS
     this.server.emit('solicitacao:nova', {
       type: 'nova_solicitacao',
       data: conversa,
       timestamp: new Date().toISOString(),
     });
     
-    // 🔴 NÃO emitir para sala ainda - só quando alguém entrar
-    // Apenas emite via serviço de eventos para logs
     this.whatsappEvents.emitNovaSolicitacao(this.server, conversa);
-    
-    // Atualiza também a lista de conversas
     this.conversationManager.enviarConversasAtualizadas(this.server);
   }
 
-  // 4. Método para emitir mensagem enviada
   emitMessageSent(data: any) {
-    // Usando sala específica agora
     if (data.solicitacaoId) {
       this.server.to(`solicitacao:${data.solicitacaoId}`).emit('message:sent', {
         ...data,
@@ -439,9 +527,7 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
     }
   }
 
-  // 5. Método para emitir nova mensagem do cliente
   emitNovaMensagemCliente(solicitacaoId: string, mensagem: any) {
-    // Enviar apenas para a sala da solicitação
     this.server.to(`solicitacao:${solicitacaoId}`).emit('message:new', {
       type: 'nova_mensagem',
       data: {
@@ -452,7 +538,6 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
     });
   }
 
-  // 6. Métodos adicionais que podem ser necessários
   emitWhatsAppReady(info: any) {
     this.whatsappEvents.emitWhatsAppReady(this.server, info);
   }
@@ -509,7 +594,6 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
 
   // ========== MÉTODOS AUXILIARES ==========
   emit(event: string, data: any) {
-    // Método genérico - usa sala se tiver solicitacaoId
     if (data.solicitacaoId) {
       this.server.to(`solicitacao:${data.solicitacaoId}`).emit(event, {
         ...data,
@@ -527,11 +611,127 @@ export class WebSocketGatewayService implements OnGatewayInit, OnGatewayConnecti
     return this.websocketManager.getStats(this.server);
   }
 
-  // ========== MÉTODO PARA ENVIAR MENSAGEM PARA SALA ESPECÍFICA ==========
   sendToRoom(solicitacaoId: string, event: string, data: any) {
     this.server.to(`solicitacao:${solicitacaoId}`).emit(event, {
       ...data,
       timestamp: new Date().toISOString(),
     });
   }
+
+  // ========== MÉTODOS PRIVADOS AUXILIARES ==========
+ private async verificarPermissaoAcesso(
+  analistaId: number, 
+  atendenteAtualId: number, 
+  solicitacaoId: string
+): Promise<boolean> {
+  try {
+    console.log(`🔍 Verificando permissão: Analista ${analistaId} → Atendente ${atendenteAtualId} → Solicitação ${solicitacaoId}`);
+    
+    // 1. Se for o mesmo analista, pode acessar
+    if (analistaId === atendenteAtualId) {
+      console.log(`✅ Permissão concedida: mesmo analista`);
+      return true;
+    }
+    
+    // 2. Se a solicitação ainda não tem analista, pode acessar
+    const solicitacao = await this.conversationManager.getSolicitacao(solicitacaoId);
+    if (!solicitacao?.atendente_id) {
+      console.log(`✅ Permissão concedida: solicitação sem analista`);
+      return true;
+    }
+    
+    // 3. Simulação: se for analista ID 1 (admin), permite
+    if (analistaId === 1) {
+      console.log(`✅ Permissão concedida: analista admin (ID 1)`);
+      return true;
+    }
+    
+    // 4. Por enquanto, nega todos os outros casos
+    console.log(`❌ Permissão negada: analista ${analistaId} não tem acesso`);
+    return false;
+    
+  } catch (error) {
+    console.error(`❌ Erro ao verificar permissão: ${error.message}`);
+    return false; // Em caso de erro, nega por segurança
+  }
+}
+
+  private async getAnalistaPorId(id: number): Promise<any> {
+    // TODO: Implementar busca no banco de dados
+    // Por enquanto, retorna mock
+    return {
+      id,
+      username: `analista${id}`,
+      nome_completo: `Analista ${id}`,
+      email: `analista${id}@empresa.com`,
+      role: 'analista',
+      departamento_id: 1,
+      ativo: true,
+    };
+  }
+
+  private calcularTempoEspera(createdAt: Date): string {
+    const diff = Date.now() - new Date(createdAt).getTime();
+    const horas = Math.floor(diff / (1000 * 60 * 60));
+    const minutos = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    
+    if (horas > 0) return `${horas}h ${minutos}m`;
+    return `${minutos}m`;
+  }
+
+  private calcularPrioridade(tipoProblema: string, createdAt: Date): 'alta' | 'normal' | 'baixa' {
+    const tempoEspera = Date.now() - new Date(createdAt).getTime();
+    const horasEspera = tempoEspera / (1000 * 60 * 60);
+    
+    if (tipoProblema === 'PDV Parado') return 'alta';
+    if (horasEspera > 1) return 'alta';
+    if (tipoProblema === 'Promoção / Oferta') return 'normal';
+    
+    return 'baixa';
+  }
+
+  @SubscribeMessage('analista:login')
+@UseGuards(WsAuthGuard) // Com JWT do sistema de login
+async handleAnalistaLogin(
+  @ConnectedSocket() client: Socket,
+  @MessageBody() data: { analistaId: number; nome: string }
+) {
+  try {
+    const { analistaId, nome } = data;
+    
+    // Usar o novo método com analistaId
+    this.websocketManager.loginAtendenteComAnalista(client, {
+      nome,
+      analistaId,
+    });
+    
+    // Salvar também no socket para fácil acesso
+    client['analistaId'] = analistaId;
+    client['atendenteNome'] = nome;
+    
+    client.emit('analista:logged', {
+      success: true,
+      analistaId,
+      nome,
+      socketId: client.id,
+      message: 'Login de analista realizado com sucesso',
+      timestamp: new Date().toISOString(),
+    });
+    
+    this.logger.log(`👤 Analista logado: ${nome} (ID: ${analistaId})`);
+    
+    return {
+      evento: 'analista:logged',
+      data: { analistaId, nome, socketId: client.id }
+    };
+    
+  } catch (error) {
+    this.logger.error(`❌ Erro no login de analista: ${error.message}`);
+    client.emit('error', {
+      message: error.message,
+      timestamp: new Date().toISOString(),
+    });
+    return null;
+  }
+}
 }

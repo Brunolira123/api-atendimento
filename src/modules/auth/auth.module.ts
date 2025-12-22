@@ -1,11 +1,13 @@
-// src/modules/auth/auth.module.ts
+
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
-import { JwtService } from './jwt.service';
+import { AuthController } from './auth.controller';
+import { AuthService } from './auth.service';
+import { AnalistasModule } from '../analistas/analistas.module';
 
 @Module({
-  imports: [ConfigModule],
-  providers: [JwtService],
-  exports: [JwtService], // ✅ CRUCIAL: Exportar o serviço
+  imports: [AnalistasModule], 
+  controllers: [AuthController],
+  providers: [AuthService],
+  exports: [AuthService],
 })
 export class AuthModule {}

@@ -29,6 +29,10 @@ export class Solicitacao {
   @Column({ name: 'atendente_discord', length: 100, nullable: true })
   atendenteDiscord: string;
 
+  // 🔥 NOVO CAMPO: ID do analista do sistema (não do Discord)
+  @Column({ name: 'atendente_id', type: 'integer', nullable: true })
+  atendente_id: number;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

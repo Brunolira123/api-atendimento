@@ -5,6 +5,7 @@ import { WhatsAppModule } from './modules/whatsapp/whatsapp.module';
 import { WebSocketModule } from './modules/websocket/websocket.module';
 import { AtendimentoModule } from './modules/atendimento/atendimento.module';
 import { ConversationsModule } from '@modules/conversations/conversations.module';
+import { SharedModule } from '@shared/shared.module';
 
 @Module({
   imports: [
@@ -27,7 +28,8 @@ import { ConversationsModule } from '@modules/conversations/conversations.module
     WhatsAppModule,
     WebSocketModule,
     AtendimentoModule,
-    ConversationsModule
+    ConversationsModule,
+    SharedModule
   ],
 })
 export class AppModule {}
