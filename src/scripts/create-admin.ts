@@ -14,7 +14,7 @@ async function createAdmin() {
     
     console.log('✅ Conectado ao banco de dados');
 
-    const adminUsername = 'admin';
+    const adminUsername = 'admin@vrip.com.br';
     const adminPassword = 'admin123';
     
     // Gerar hash da senha

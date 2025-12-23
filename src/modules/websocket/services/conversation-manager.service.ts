@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, ILike } from 'typeorm';
+import { Repository, Between, ILike, In } from 'typeorm';
 import { Solicitacao } from '@shared/entities/solicitacao.entity';
 import { Server, Socket } from 'socket.io';
 
@@ -316,4 +316,23 @@ export class ConversationManagerService {
       return [];
     }
   }
+  // src/modules/websocket/services/conversation-manager.service.ts
+// ADICIONE ESTE MÉTODO:
+
+async getSolicitacoesNaoFinalizadas(): Promise<Solicitacao[]> {
+  try {
+    return await this.solicitacaoRepository.find({
+      where: { 
+        status: In(['pendente', 'em_atendimento']), // Ambos status
+        // Remover filtro de atendente_id para ver todas
+      },
+      order: { createdAt: 'DESC' },
+      take: 100, // Aumentar limite
+    });
+  } catch (error) {
+    this.logger.error(`❌ Erro ao buscar não finalizadas: ${error.message}`);
+    return [];
+  }
+}
+  
 }

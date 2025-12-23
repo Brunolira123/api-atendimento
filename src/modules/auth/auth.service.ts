@@ -1,6 +1,7 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from './jwt.service';
 import { AnalistasService } from '../analistas/analistas.service';
+import * as bcrypt from 'bcrypt';
 
 export interface LoginResponse {
   success: boolean;
@@ -135,9 +136,8 @@ export class AuthService {
     }
   }
 
-  async createFirstAdmin(): Promise<boolean> {
+   async createFirstAdmin(): Promise<boolean> {
     try {
-      // Verificar se já existe admin
       const admin = await this.analistasService.findByUsername('admin');
       
       if (admin) {
@@ -145,12 +145,15 @@ export class AuthService {
         return true;
       }
 
-      // Criar admin padrão
+      // Criar admin com SENHA CORRETA
+      const plainPassword = 'VRIP@2024';
+      const passwordHash = await bcrypt.hash(plainPassword, 10);
+      
       const adminData = {
         username: 'admin',
-        passwordHash: 'admin123', // Senha padrão - deve ser alterada
-        nomeCompleto: 'Administrador do Sistema',
-        email: 'admin@empresa.com',
+        passwordHash: passwordHash, // ← JÁ HASHADO!
+        nomeCompleto: 'Administrador VRIP',
+        email: 'admin@vrip.com.br',
         role: 'admin',
         ativo: true,
       };
@@ -158,8 +161,7 @@ export class AuthService {
       await this.analistasService.createAnalista(adminData);
       
       this.logger.log('✅ Admin padrão criado com sucesso');
-      this.logger.warn('⚠️ ALTERE A SENHA DO ADMIN IMEDIATAMENTE!');
-      this.logger.warn('⚠️ Usuário: admin | Senha: admin123');
+      this.logger.warn(`⚠️ CREDENCIAIS: admin / ${plainPassword}`);
       
       return true;
     } catch (error) {

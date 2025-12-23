@@ -9,17 +9,25 @@ import {
   ValidationPipe 
 } from '@nestjs/common';
 import { AuthService, LoginResponse } from './auth.service';
+import { IsNotEmpty, IsString } from 'class-validator';
 
 class LoginDto {
+  @IsString()
+  @IsNotEmpty()
   username: string;
+
+  @IsString()
+  @IsNotEmpty()
   password: string;
 }
 
 class ValidateTokenDto {
+  @IsString()
+  @IsNotEmpty()
   token: string;
 }
 
-@Controller('api/auth')
+@Controller('/auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 

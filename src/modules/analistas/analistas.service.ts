@@ -35,21 +35,51 @@ export class AnalistasService {
   }
 
   async validateCredentials(username: string, password: string): Promise<Analista | null> {
-    try {
-      const analista = await this.findByUsername(username);
-      
-      if (!analista) {
-        return null;
-      }
-
-      const isValid = await analista.validatePassword(password);
-      
-      return isValid ? analista : null;
-    } catch (error) {
-      this.logger.error(`❌ Erro ao validar credenciais: ${error.message}`);
+  try {
+    console.log('=== ULTIMO DEBUG VALIDATE ===');
+    console.log('Username recebido:', username);
+    console.log('Password recebida:', password);
+    console.log('Password length:', password.length);
+    
+    const analista = await this.findByUsername(username);
+    console.log('Analista existe?:', analista ? 'SIM' : 'NÃO');
+    
+    if (!analista) {
       return null;
     }
+    
+    console.log('Hash do banco:', analista.passwordHash);
+    console.log('Hash length:', analista.passwordHash.length);
+    
+    // Teste DIRETO com bcrypt, BYPASSANDO o método da entidade
+    const bcrypt = require('bcrypt');
+    console.log('Fazendo comparação DIRETA com bcrypt...');
+    
+    try {
+      const isValid = await bcrypt.compare(password, analista.passwordHash);
+      console.log('✅ Resultado da comparação DIRETA:', isValid);
+      
+      if (!isValid) {
+        console.log('⚠️ BCRYPT diz que a senha está ERRADA!');
+        console.log('⚠️ Mas nosso script disse que está CERTA!');
+        console.log('⚠️ Hash no script:', '$2b$10$MAydeOBBqlfgEPu.YfEUEu5gh3fzEJYVq5nwXSI7aGTYLOatavJiu');
+        console.log('⚠️ Hash no banco:', analista.passwordHash);
+        console.log('⚠️ São iguais?:', 
+          '$2b$10$MAydeOBBqlfgEPu.YfEUEu5gh3fzEJYVq5nwXSI7aGTYLOatavJiu' === analista.passwordHash
+        );
+      }
+      
+      return isValid ? analista : null;
+    } catch (bcryptError) {
+      console.error('❌ ERRO no bcrypt.compare:', bcryptError);
+      return null;
+    }
+    
+  } catch (error) {
+    console.error('❌ ERRO GERAL validateCredentials:', error);
+    return null;
   }
+}
 
   async createAnalista(data: Partial<Analista>): Promise<Analista> {
     try {

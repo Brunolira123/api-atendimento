@@ -43,10 +43,9 @@ export class Analista {
   }
 
   @BeforeInsert()
-  @BeforeUpdate()
   async hashPassword(): Promise<void> {
-    if (this.passwordHash && !this.passwordHash.startsWith('$2b$')) {
-      this.passwordHash = await bcrypt.hash(this.passwordHash, 10);
+     if (this.passwordHash && this.passwordHash.length < 60) {
+    this.passwordHash = await bcrypt.hash(this.passwordHash, 10);
     }
   }
 

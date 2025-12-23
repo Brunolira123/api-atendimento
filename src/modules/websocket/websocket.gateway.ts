@@ -734,4 +734,52 @@ async handleAnalistaLogin(
     return null;
   }
 }
+
+@SubscribeMessage('solicitacoes:nao_finalizadas')
+@UseGuards(WsAuthGuard)
+async handleSolicitacoesNaoFinalizadas(@ConnectedSocket() client: Socket) {
+  try {
+    const analista = client['user'];
+    
+    // Buscar TODAS as não finalizadas
+    const solicitacoes = await this.conversationManager.getSolicitacoesNaoFinalizadas();
+    
+    // Formatar para o frontend
+    const naoFinalizadas = solicitacoes.map(sol => ({
+      id: sol.solicitacaoId,
+      razaoSocial: sol.razaoSocial,
+      clienteNome: sol.nomeResponsavel,
+      tipoProblema: sol.tipoProblema,
+      descricao: sol.descricao?.substring(0, 200) + (sol.descricao?.length > 200 ? '...' : ''),
+      whatsappId: sol.whatsappId,
+      criadoEm: sol.createdAt,
+      tempoEspera: this.calcularTempoEspera(sol.createdAt),
+      prioridade: this.calcularPrioridade(sol.tipoProblema, sol.createdAt),
+      status: sol.status,
+      atendenteId: sol.atendente_id,
+      atendenteDiscord: sol.atendenteDiscord,
+      finalizadoEm: sol.finalizadoEm,
+    }));
+    
+    client.emit('solicitacoes:nao_finalizadas:lista', {
+      success: true,
+      solicitacoes: naoFinalizadas,
+      count: naoFinalizadas.length,
+      timestamp: new Date().toISOString(),
+    });
+    
+    return {
+      evento: 'solicitacoes:nao_finalizadas:lista',
+      data: { solicitacoes: naoFinalizadas }
+    };
+    
+  } catch (error) {
+    this.logger.error(`❌ Erro ao buscar não finalizadas: ${error.message}`);
+    client.emit('solicitacoes:nao_finalizadas:error', {
+      message: error.message,
+      timestamp: new Date().toISOString(),
+    });
+    return null;
+  }
+}
 }
