@@ -4,7 +4,7 @@ import { Controller, Get, Param, Query, NotFoundException } from '@nestjs/common
 import { ConversationsService } from './conversations.service';
 
 // @ApiTags('conversations') // REMOVER
-@Controller('api/conversations')
+@Controller('conversations')
 export class ConversationsController {
   constructor(private readonly conversationsService: ConversationsService) {}
 
